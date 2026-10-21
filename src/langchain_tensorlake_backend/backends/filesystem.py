@@ -1,7 +1,7 @@
 """Deep Agents filesystem backend backed by Tensorlake Cloud Volumes."""
 
 import base64
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from functools import wraps
 from pathlib import PurePosixPath
 from threading import RLock
@@ -37,7 +37,7 @@ MAX_SEARCH_FILES = 10_000
 MAX_SEARCH_BYTES = 64 * 1024 * 1024
 
 
-def _volume_path(path: str, *, allow_root: bool = False, hidden_names: Collection[str] = ()) -> str:
+def _volume_path(path: str, *, allow_root: bool = False) -> str:
     """Translate virtual absolute paths to filesystem-relative paths."""
     parsed = PurePosixPath(path)
     if (
@@ -49,8 +49,6 @@ def _volume_path(path: str, *, allow_root: bool = False, hidden_names: Collectio
         or (not allow_root and not parsed.name)
     ):
         raise ValueError("invalid_path: use an absolute path within the filesystem")
-    if set(parsed.parts) & set(hidden_names):
-        raise ValueError("permission_denied: path contains an excluded name")
     return str(parsed).lstrip("/")
 
 
@@ -94,7 +92,6 @@ class TensorlakeFilesystemBackend(BackendProtocol):
     Args:
         filesystem: Existing filesystem or resolver called within each operation.
         lock: Optional shared reentrant lock for coordinating backend instances.
-        hidden_names: File/directory names excluded at every depth; none by default.
         max_file_bytes: Maximum bytes read or written by a single file operation.
         max_search_files: Maximum entries visited by a directory search.
         max_search_bytes: Maximum content bytes inspected by grep.
@@ -108,7 +105,6 @@ class TensorlakeFilesystemBackend(BackendProtocol):
         filesystem: Filesystem | Callable[[], Filesystem],
         *,
         lock=None,
-        hidden_names: Collection[str] = (),
         max_file_bytes: int = MAX_FILE_BYTES,
         max_search_files: int = MAX_SEARCH_FILES,
         max_search_bytes: int = MAX_SEARCH_BYTES,
@@ -119,14 +115,6 @@ class TensorlakeFilesystemBackend(BackendProtocol):
             self._filesystem = filesystem
         else:
             raise TypeError("filesystem must be a Tensorlake Filesystem or synchronous resolver")
-        if isinstance(hidden_names, str) or any(
-            not isinstance(name, str)
-            or not name
-            or name in {".", "..", "~"}
-            or any(character in name for character in "/\\\x00")
-            for name in hidden_names
-        ):
-            raise ValueError("hidden_names must contain individual file or directory names")
         for name, value in {
             "max_file_bytes": max_file_bytes,
             "max_search_files": max_search_files,
@@ -135,13 +123,12 @@ class TensorlakeFilesystemBackend(BackendProtocol):
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
         self._lock = lock if lock is not None else RLock()
-        self._hidden_names = frozenset(hidden_names)
         self._max_file_bytes = max_file_bytes
         self._max_search_files = max_search_files
         self._max_search_bytes = max_search_bytes
 
     def _path(self, path: str, *, allow_root: bool = False) -> str:
-        return _volume_path(path, allow_root=allow_root, hidden_names=self._hidden_names)
+        return _volume_path(path, allow_root=allow_root)
 
     @_file_result(LsResult)
     def ls(self, path: str) -> LsResult:
@@ -152,7 +139,7 @@ class TensorlakeFilesystemBackend(BackendProtocol):
             return LsResult(entries=[])
         entries = []
         for row in fs.list_files(relative, version=version):
-            if self._hidden_names.intersection(PurePosixPath(row.path).parts) or row.is_symlink:
+            if row.is_symlink:
                 continue
             self._path("/" + row.path)
             entries.append(
@@ -253,9 +240,7 @@ class TensorlakeFilesystemBackend(BackendProtocol):
                 visited += 1
                 if visited > self._max_search_files:
                     raise ValueError("search_too_large: narrow the search path")
-                if (
-                    self._hidden_names.intersection(PurePosixPath(row.path).parts)
-                ) or row.is_symlink:
+                if row.is_symlink:
                     continue
                 self._path("/" + row.path)
                 if row.is_dir:

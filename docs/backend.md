@@ -25,9 +25,11 @@ is accepted for directory operations; file operations reject root. Paths with
 Repeated internal separators and `.` segments are normalized by `PurePosixPath`.
 Uploads reject aliases that normalize to the same destination before writing.
 
-`hidden_names` optionally excludes exact file/directory names at any depth.
-Excluded entries and symbolic links are omitted from listings and searches.
-Path policy is independent of any application-specific folder name or mount.
+Dotfiles and dot directories are accessible like other volume paths, including
+in listings and searches. Symbolic links are omitted from listings and searches.
+Application-specific access policy belongs to the caller. Glob patterns retain
+Deep Agents semantics: basename patterns can match files inside dot directories;
+recursive `**` patterns require explicitly matching dot-directory segments.
 
 ## File operations
 

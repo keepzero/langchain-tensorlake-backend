@@ -35,7 +35,7 @@ def test_concrete_filesystem_and_public_exports(filesystem):
     filesystem.snapshot.assert_not_called()
 
 
-def test_no_application_specific_names_are_hidden_by_default(filesystem):
+def test_dot_directories_are_visible(filesystem):
     filesystem.read_file.return_value = b"visible"
     filesystem.list_files.return_value = [
         FileEntry(name=".mytrade", path=".mytrade", kind="directory")
@@ -45,17 +45,29 @@ def test_no_application_specific_names_are_hidden_by_default(filesystem):
     assert backend.ls("/").entries[0]["path"] == "/.mytrade/"
 
 
-def test_custom_exclusions_apply_at_every_depth(filesystem):
-    backend = TensorlakeFilesystemBackend(filesystem, hidden_names=(".internal",))
-    filesystem.list_files.return_value = [
-        FileEntry(name=".internal", path="reports/.internal", kind="directory"),
-        FileEntry(name="visible.txt", path="reports/visible.txt"),
-        FileEntry(name="link", path="reports/link", kind="symlink"),
+def test_nested_dot_directories_are_searchable_and_symlinks_are_skipped(filesystem):
+    backend = TensorlakeFilesystemBackend(filesystem)
+    filesystem.read_file.return_value = b"visible"
+    filesystem.list_files.side_effect = lambda path, version: {
+        "": [FileEntry(name="reports", path="reports", kind="directory")],
+        "reports": [
+            FileEntry(name=".internal", path="reports/.internal", kind="directory"),
+            FileEntry(name="visible.txt", path="reports/visible.txt"),
+            FileEntry(name="link", path="reports/link", kind="symlink"),
+        ],
+        "reports/.internal": [FileEntry(name="a.txt", path="reports/.internal/a.txt")],
+    }[path]
+    assert backend.read("/reports/.internal/a.txt").file_data["content"] == "visible"
+    assert {row["path"] for row in backend.ls("/reports").entries} == {
+        "/reports/.internal/",
+        "/reports/visible.txt",
+    }
+    expected = {"/reports/visible.txt", "/reports/.internal/a.txt"}
+    assert {row["path"] for row in backend.glob("*.txt", path="/reports").matches} == expected
+    assert {row["path"] for row in backend.grep("visible", path="/reports").matches} == expected
+    assert [row["path"] for row in backend.glob(".internal/*.txt", path="/reports").matches] == [
+        "/reports/.internal/a.txt"
     ]
-    assert backend.read("/reports/.internal/a").error.startswith("permission_denied")
-    assert [row["path"] for row in backend.ls("/reports").entries] == ["/reports/visible.txt"]
-    assert backend.glob("*", path="/reports").matches[0]["path"] == "/reports/visible.txt"
-    filesystem.read_file.assert_not_called()
 
 
 @pytest.mark.parametrize("option", ["max_file_bytes", "max_search_files", "max_search_bytes"])
@@ -63,12 +75,6 @@ def test_custom_exclusions_apply_at_every_depth(filesystem):
 def test_processing_budgets_require_positive_integers(filesystem, option, value):
     with pytest.raises(ValueError, match=option):
         TensorlakeFilesystemBackend(filesystem, **{option: value})
-
-
-@pytest.mark.parametrize("hidden_names", [".private", ("",), ("a/b",), ("..",), ("a\\b",)])
-def test_hidden_names_are_individual_components(filesystem, hidden_names):
-    with pytest.raises(ValueError, match="hidden_names"):
-        TensorlakeFilesystemBackend(filesystem, hidden_names=hidden_names)
 
 
 def test_configurable_file_limit_and_empty_upload(filesystem):

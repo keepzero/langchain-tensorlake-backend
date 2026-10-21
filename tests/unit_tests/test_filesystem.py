@@ -15,7 +15,7 @@ from langchain_tensorlake_backend import TensorlakeFilesystemBackend
 def volume_backend():
     fs = Mock()
     fs.status.return_value = SimpleNamespace(version_id="fixed-version")
-    return fs, TensorlakeFilesystemBackend(lambda: fs, hidden_names=(".mytrade",))
+    return fs, TensorlakeFilesystemBackend(lambda: fs)
 
 
 def test_read_has_framework_pagination_and_binary_handling(volume_backend):
@@ -46,7 +46,7 @@ def test_empty_volume_does_not_read_a_nonexistent_head(volume_backend):
     fs.write_file.assert_called_once_with("report.md", b"first")
 
 
-@pytest.mark.parametrize("path", ["../x", "/../x", "/a/../x", "/x\x00", "/x\\y", "/.mytrade/x"])
+@pytest.mark.parametrize("path", ["../x", "/../x", "/a/../x", "/x\x00", "/x\\y"])
 def test_invalid_paths_never_reach_storage(volume_backend, path):
     fs, backend = volume_backend
     assert backend.read(path).error
@@ -96,6 +96,7 @@ def test_search_pins_directory_and_content_reads_to_one_version(volume_backend):
             FileEntry(name=".mytrade", path=".mytrade", kind="directory"),
         ],
         "reports": [FileEntry(name="a.md", path="reports/a.md", size=7)],
+        ".mytrade": [],
     }[path]
     fs.read_file.return_value = b"needle\nneedle"
     assert backend.glob("**/*.md").matches[0]["path"] == "/reports/a.md"
@@ -116,15 +117,13 @@ def test_grep_accepts_a_single_file_path(volume_backend):
     fs.list_files.assert_called_once_with("reports", version="fixed-version")
 
 
-def test_private_artifact_route_is_explicit_and_main_has_no_execute(volume_backend):
+def test_workspace_mount_preserves_dot_paths_and_has_no_execute(volume_backend):
     fs, backend = volume_backend
     assert not hasattr(backend, "execute")
-    assert backend.read("/.mytrade/result.txt").error
-    internal = TensorlakeFilesystemBackend(lambda: fs)
-    fs.read_file.return_value = b"framework result"
-    assert internal.read("/.mytrade/result.txt").error is None
+    fs.read_file.return_value = b"existing file"
+    assert backend.read("/.mytrade/result.txt").file_data["content"] == "existing file"
     composite = CompositeBackend(default=StateBackend(), routes={"/workspace/": backend})
-    assert composite.read("/workspace/report.md").error is None
+    assert composite.read("/workspace/.mytrade/result.txt").file_data["content"] == "existing file"
 
 
 def test_storage_error_never_exposes_provider_credentials(volume_backend):
