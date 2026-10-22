@@ -8,9 +8,10 @@ a model provider, or a sandbox integration package.
 
 Pass a `Filesystem` or a synchronous resolver returning one. A resolver is called
 inside an operation, including in the worker thread used by the inherited async
-methods; context variables follow Python's `asyncio.to_thread` behavior. Supply a
-shared reentrant `lock` when several backend instances coordinate one volume.
-This lock only serializes operations using that same lock in one process.
+methods; context variables follow Python's `asyncio.to_thread` behavior. Each
+instance serializes its own operations with an internal reentrant lock. Shared
+locking across backend instances, sandbox commands, or workers belongs in the
+application layer; the constructor does not accept an external lock.
 
 The caller selects the volume, keeps API credentials outside agent-visible
 files, and manages its lifetime. The backend never creates a volume, retains a

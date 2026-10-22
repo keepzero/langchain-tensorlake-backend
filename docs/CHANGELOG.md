@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-22
+
+- Remove the external `lock` constructor parameter. Each backend retains its own
+  internal lock; applications coordinate shared access outside this package.
+
 ## Unreleased — 2026-10-21
 
 - Remove the `hidden_names` option and name-based filtering. Dotfiles and dot

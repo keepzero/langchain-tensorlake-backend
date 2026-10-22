@@ -91,12 +91,13 @@ class TensorlakeFilesystemBackend(BackendProtocol):
 
     Args:
         filesystem: Existing filesystem or resolver called within each operation.
-        lock: Optional shared reentrant lock for coordinating backend instances.
         max_file_bytes: Maximum bytes read or written by a single file operation.
         max_search_files: Maximum entries visited by a directory search.
         max_search_bytes: Maximum content bytes inspected by grep.
 
-    Snapshot retention, sandbox mounts, and task lifecycle belong to the caller.
+    Each instance serializes its own operations with an internal reentrant lock.
+    Cross-backend coordination, snapshot retention, sandbox mounts, and task
+    lifecycle belong to the caller.
     Async methods are inherited from BackendProtocol and run sync work in threads.
     """
 
@@ -104,7 +105,6 @@ class TensorlakeFilesystemBackend(BackendProtocol):
         self,
         filesystem: Filesystem | Callable[[], Filesystem],
         *,
-        lock=None,
         max_file_bytes: int = MAX_FILE_BYTES,
         max_search_files: int = MAX_SEARCH_FILES,
         max_search_bytes: int = MAX_SEARCH_BYTES,
@@ -122,7 +122,7 @@ class TensorlakeFilesystemBackend(BackendProtocol):
         }.items():
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        self._lock = lock if lock is not None else RLock()
+        self._lock = RLock()
         self._max_file_bytes = max_file_bytes
         self._max_search_files = max_search_files
         self._max_search_bytes = max_search_bytes
